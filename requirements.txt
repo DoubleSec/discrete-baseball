@@ -1,0 +1,11 @@
+# Obviously you might want specific versions here.
+torch
+polars
+lightning
+pyyaml
+# Optional, but I like it
+black
+tensorboard
+pybaseball
+logzero
+ipykernel
