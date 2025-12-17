@@ -11,8 +11,9 @@ class NumericState:
 
     DEFAULT_BUCKETS = 10
 
-    def __init__(self, state: Any):
+    def __init__(self, state: Any, explicit_missing: bool):
         self.state = state
+        self.explicit_missing = explicit_missing
 
     @classmethod
     def from_data(
@@ -25,40 +26,47 @@ class NumericState:
 
         kwargs = {} if kwargs is None else kwargs
         n_buckets = kwargs.get("n_buckets", cls.DEFAULT_BUCKETS)
-        print(f"{n_buckets=}")
 
         # We don't want the first or last one.
         cuts = np.linspace(0, 1, num=n_buckets + 2)[1:-1]
         quantiles = [column.quantile(q) for q in cuts]
         labels = (
-            [f"(-inf)-{quantiles[0]}"]
-            + [f"{ql}-{qh}" for ql, qh in zip(quantiles[:-1], quantiles[1:])]
-            + [f"{quantiles[-1]}-(inf)"]
+            [f"(-inf, {quantiles[0]}]"]
+            + [f"({ql}. {qh}]" for ql, qh in zip(quantiles[:-1], quantiles[1:])]
+            + [f"({quantiles[-1]}, inf]"]
         )
         return cls(
             {
                 "quantiles": quantiles,
                 "values": labels,
                 "group": group,
-            }
+            },
+            explicit_missing=explicit_missing,
         )
 
     def transform(self, x: pl.Expr) -> pl.Expr:
 
-        return pl.concat_str(
-            pl.lit(f"{self.state['group']} = "),
-            x.cut(self.state["quantiles"], labels=self.state["values"]),
-        )
+        x = x.cut(self.state["quantiles"], labels=self.state["values"])
+        if self.explicit_missing:
+            x = x.fill_null("<MISSING>")
+
+        return pl.concat_str(pl.lit(f"{self.state['group']} = "), x)
 
     @property
     def vocab(self):
-        return [f"{self.state['group']} = {label}" for label in self.state["values"]]
+        values = (
+            self.state["values"]
+            if not self.explicit_missing
+            else self.state["values"] + ["<MISSING>"]
+        )
+        return [f"{self.state['group']} = {label}" for label in values]
 
 
 class CategoricalState:
 
-    def __init__(self, state: Any):
+    def __init__(self, state: Any, explicit_missing: bool):
         self.state = state
+        self.explicit_missing = explicit_missing
 
     @classmethod
     def from_data(
@@ -75,16 +83,24 @@ class CategoricalState:
             {
                 "values": unique,
                 "group": group,
-            }
+            },
+            explicit_missing=explicit_missing,
         )
 
     def transform(self, x) -> pl.Expr:
 
+        if self.explicit_missing:
+            x = x.fill_null("<MISSING>")
         return pl.concat_str(pl.lit(f"{self.state['group']} = "), x)
 
     @property
     def vocab(self):
-        return [f"{self.state['group']} = {label}" for label in self.state["values"]]
+        values = (
+            self.state["values"]
+            if not self.explicit_missing
+            else self.state["values"] + ["<MISSING>"]
+        )
+        return [f"{self.state['group']} = {label}" for label in values]
 
 
 class Stringifier:
@@ -165,11 +181,14 @@ class TimeTokenizer:
 def make_vocabulary(
     stringifiers: list[Stringifier],
     time_tokenizer: TimeTokenizer,
+    special_tokens: list[str] | None = None,
 ) -> dict[str, int]:
 
     unique_values = set(
         list(chain.from_iterable(s.vocab for s in stringifiers)) + time_tokenizer.vocab
     )
+    if special_tokens is not None:
+        unique_values.update(set(special_tokens))
 
     return {item: i for i, item in enumerate(unique_values)}
 
@@ -178,6 +197,8 @@ if __name__ == "__main__":
 
     import numpy as np
 
+    rng = np.random.default_rng()
+
     key = np.repeat(np.arange(10), 10)
     x = np.arange(100)
     y = np.tile(np.arange(5), 20)
@@ -185,13 +206,13 @@ if __name__ == "__main__":
     df = pl.DataFrame({"key": key, "x": x, "y": y, "times": times})
 
     # numeric
-    xs = Stringifier.from_data(df["x"], "numeric", "X")
+    xs = Stringifier.from_data(df["x"], "numeric", "X", True)
     df = df.with_columns()
     print(xs.state)
     print(xs.vocab)
 
     # Categorical
-    ys = Stringifier.from_data(df["y"], "categorical", "Y")
+    ys = Stringifier.from_data(df["y"], "categorical", "Y", True)
     df = df.with_columns(ys.transform(pl.col("y")).alias("yt"))
     print(ys.state)
     print(ys.vocab)
