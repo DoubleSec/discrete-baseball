@@ -9,7 +9,45 @@ preparation_params:
   end_date: "2023-12-31"
 
 dataset_params:
-  note: For dataset configuration
+
+  keys:
+    - game_pk
+    - player_name
+    - at_bat_number
+
+  order_columns:
+    - pitch_number
+  
+  # Not useful for the at-bat version
+  time_column: inning
+
+  features:
+    pitch_name:
+      data_type: categorical
+      group: pitch
+    release_speed:
+      data_type: numeric
+      group: velo
+    plate_x:
+      data_type: numeric
+      group: plate_x
+    plate_z:
+      data_type: numeric
+      group: plate_z
+    description:
+      data_type: categorical
+      group: description
+    events:
+      data_type: categorical
+      group: events
+      explicit_missing: false
+
+  special_tokens:
+    - "<SOS>"
+    - "<EOS>"
+
+  keyword_args:
+    n_buckets: 32
 
 dataloader_params:
   # Generic examples.

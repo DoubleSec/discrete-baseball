@@ -121,7 +121,7 @@ class Stringifier:
         column: pl.Expr,
         data_type: str,
         group: str,
-        explicit_missing: bool = False,
+        explicit_missing: bool = True,
         kwargs: dict[str, Any] | None = None,
     ) -> Self:
         """Make a stringifier from data."""
