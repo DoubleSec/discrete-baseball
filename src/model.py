@@ -7,6 +7,7 @@ from typing import Any
 
 import torch
 import lightning.pytorch as pl
+from torchmetrics.text import Perplexity
 from x_transformers import TransformerWrapper, Decoder
 
 from .processing import Stringifier, TimeTokenizer
@@ -38,11 +39,12 @@ class AutoregressivePretrainedModel(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters(logger=False)
         self.optimizer_params = optimizer_params
+        self.ignore_index = complete_vocab["<PAD>"]
 
         self.transformer = TransformerWrapper(
             num_tokens=len(complete_vocab),
             max_seq_len=max_seq_len,
-            return_only_embded=True,
+            return_only_embed=True,
             emb_dropout=emb_dropout,
             attn_layers=Decoder(
                 dim=d_model,
@@ -54,6 +56,10 @@ class AutoregressivePretrainedModel(pl.LightningModule):
             ),
         )
         self.prediction_head = torch.nn.Linear(d_model, len(complete_vocab))
+
+        # Metrics
+        self.train_perplexity = Perplexity(ignore_index=self.ignore_index)
+        self.valid_perplexity = Perplexity(ignore_index=self.ignore_index)
 
     def configure_optimizers(self):
         """Lightning hook for optimizer setup.
@@ -87,7 +93,34 @@ class AutoregressivePretrainedModel(pl.LightningModule):
         Returns loss as one-element tensor.
         """
 
-        raise NotImplementedError
+        # Strip off EOS: (n, s-1)
+        input = x["x"][:, :-1]
+        # Strip off SOS: (n, s-1)
+        targets = x["x"][:, 1:]
+
+        # (n, s-1, e)
+        embeddings = self.transformer(input)
+        # (n, v, s-1)
+        logits = self.prediction_head(embeddings)
+        # print(targets.shape)
+        # print(logits.shape)
+
+        loss = torch.nn.functional.cross_entropy(
+            logits.mT, targets, ignore_index=self.ignore_index, reduction="mean"
+        )
+
+        # Update the metric
+        if stage == "train":
+            self.train_perplexity(logits, targets)
+            metric = self.train_perplexity
+        elif stage == "valid":
+            self.valid_perplexity(logits, targets)
+            metric = self.valid_perplexity
+
+        self.log(f"{stage}_loss", loss)
+        self.log(f"{stage}_perplexity", metric)
+
+        return loss
 
     def training_step(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
         """Lightning hook for training."""

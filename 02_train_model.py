@@ -5,7 +5,7 @@ import torch
 from lightning import pytorch as pl
 
 from src.data import TrainingDataset
-from src.model import WhateverModel
+from src.model import AutoregressivePretrainedModel
 
 if __name__ == "__main__":
 
@@ -52,12 +52,13 @@ if __name__ == "__main__":
 
     with trainer.init_module():
 
-        net = WhateverModel(
+        net = AutoregressivePretrainedModel(
+            **ds.get_state(),
             **config["model_params"],
             optimizer_params=config["optimizer_params"],
         )
         # Maybe
-        net.compile()
+        # net.compile()
 
     torch.set_float32_matmul_precision("medium")
     trainer.fit(net, train_dataloaders=train_dl, val_dataloaders=valid_dl)

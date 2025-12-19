@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import Dataset
 from logzero import logger
 
-from processing import (
+from .processing import (
     TimeTokenizer,
     Stringifier,
     make_vocabulary,
@@ -157,12 +157,21 @@ class TrainingDataset(Dataset):
         x = torch.nn.functional.pad(
             torch.tensor(row["processed_list"]),
             (0, self.max_length - row["sequence_length"]),
+            value=self.complete_vocab["<PAD>"],
         )
         return {k: row[k] for k in self.keys} | {"x": x}
 
     @classmethod
     def from_saved(cls, path, *args, **kwargs):
         raise NotImplementedError("TKTK load from saved")
+
+    def get_state(self):
+        return {
+            "stringifiers": self.stringifiers,
+            "time_tokenizer": self.time_tokenizer,
+            "complete_vocab": self.complete_vocab,
+            "max_seq_len": self.max_length,
+        }
 
 
 if __name__ == "__main__":
