@@ -7,16 +7,28 @@ from typing import Any
 
 import torch
 import lightning.pytorch as pl
+from x_transformers import TransformerWrapper, Decoder
+
+from .processing import Stringifier, TimeTokenizer
 
 
-class WhateverModel(pl.LightningModule):
+class AutoregressivePretrainedModel(pl.LightningModule):
     """Model for whatever we're doing."""
 
     def __init__(
         self,
         optimizer_params: dict[str, Any],
-        *args,
-        **kwargs,
+        # Data artifacts
+        stringifiers: list[Stringifier],
+        time_tokenizer: TimeTokenizer,
+        complete_vocab: dict[str:int],
+        # Model parameters
+        d_model: int,
+        max_seq_len: int,
+        depth: int,
+        heads: int,
+        emb_dropout: float,
+        attn_dropout: float,
     ):
         """Initialize the model.
 
@@ -27,7 +39,21 @@ class WhateverModel(pl.LightningModule):
         self.save_hyperparameters(logger=False)
         self.optimizer_params = optimizer_params
 
-        raise NotImplementedError
+        self.transformer = TransformerWrapper(
+            num_tokens=len(complete_vocab),
+            max_seq_len=max_seq_len,
+            return_only_embded=True,
+            emb_dropout=emb_dropout,
+            attn_layers=Decoder(
+                dim=d_model,
+                depth=depth,
+                heads=heads,
+                rotary_pos_emb=True,
+                attn_flash=True,
+                attn_dropout=attn_dropout,
+            ),
+        )
+        self.prediction_head = torch.nn.Linear(d_model, len(complete_vocab))
 
     def configure_optimizers(self):
         """Lightning hook for optimizer setup.
@@ -48,7 +74,7 @@ class WhateverModel(pl.LightningModule):
         Returns whatever the output of the model is.
         """
 
-        raise NotImplementedError
+        return self.transformer(x["x"])
 
     def step(self, stage: str, x: dict[str, torch.Tensor]) -> torch.Tensor:
         """Generic step for training or validation, assuming they're similar.

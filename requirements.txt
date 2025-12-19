@@ -9,3 +9,4 @@ tensorboard
 pybaseball
 logzero
 ipykernel
+x-transformers
