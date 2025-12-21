@@ -5,8 +5,8 @@ random_seed: 12345
 prepared_data_path: ./data/raw_data.parquet
 
 preparation_params:
-  start_date: "2023-01-01"
-  end_date: "2023-12-31"
+  start_date: "2019-01-01"
+  end_date: "2024-12-31"
 
 dataset_params:
 
@@ -22,6 +22,10 @@ dataset_params:
   time_column: inning
 
   features:
+    # pitcher_name:
+    #   data_type: categorical
+    #   group: pitcher
+    #   explicit_missing: false
     pitch_name:
       data_type: categorical
       group: pitch
@@ -43,40 +47,41 @@ dataset_params:
     description:
       data_type: categorical
       group: description
-    events:
-      data_type: categorical
-      group: events
-      explicit_missing: false
+    # events:
+    #   data_type: categorical
+    #   group: events
+    #   explicit_missing: false
 
   special_tokens:
     - "<SOS>"
     - "<EOS>"
     - "<PAD>"
+    - "<UNK>"
 
   keyword_args:
     n_buckets: 32
 
 dataloader_params:
   # Generic examples.
-  batch_size: 768
-  num_workers: 4
+  batch_size: 1024
+  num_workers: 6
 
 trainer_params:
   # Examples
   precision: bf16-mixed
-  max_epochs: 16
+  max_epochs: 4
   accumulate_grad_batches: 1
-  log_every_n_steps: 20
+  log_every_n_steps: 50
 
 model_params:
   d_model: 128
   depth: 4
   heads: 8
-  emb_dropout: 0.2
-  attn_dropout: 0.2
+  emb_dropout: 0.1
+  attn_dropout: 0.1
 
 optimizer_params:
   # These are just the Adam defaults.
-  lr: 0.001
+  lr: 0.005
   betas: [0.9, 0.995]
   weight_decay: 0

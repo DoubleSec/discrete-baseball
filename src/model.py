@@ -8,6 +8,7 @@ from typing import Any
 import torch
 import lightning.pytorch as pl
 from torchmetrics.text import Perplexity
+from torchmetrics.classification import BinaryAUROC
 from x_transformers import TransformerWrapper, Decoder
 
 from .processing import Stringifier, TimeTokenizer
@@ -80,7 +81,7 @@ class AutoregressivePretrainedModel(pl.LightningModule):
         Returns whatever the output of the model is.
         """
 
-        return self.transformer(x["x"])
+        return self.transformer(x)
 
     def step(self, stage: str, x: dict[str, torch.Tensor]) -> torch.Tensor:
         """Generic step for training or validation, assuming they're similar.
@@ -121,6 +122,105 @@ class AutoregressivePretrainedModel(pl.LightningModule):
         self.log(f"{stage}_perplexity", metric)
 
         return loss
+
+    def training_step(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Lightning hook for training."""
+        return self.step("train", x)
+
+    def validation_step(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Lightning hook for validation."""
+        return self.step("valid", x)
+
+
+class OutPredictor(pl.LightningModule):
+
+    def __init__(
+        self,
+        checkpoint_path,
+        optimizer_params,
+        n_clip_from_end: int,
+        unfreeze_all: bool = False,
+    ):
+        """Initialize.
+
+        n_clip_from_end allows us to not include output from the last description or the EOS token
+        for each sequence, because those leak the target.
+        """
+
+        super().__init__()
+        self.optimizer_params = optimizer_params
+        self.unfreeze_all = unfreeze_all
+
+        self.transformer = AutoregressivePretrainedModel.load_from_checkpoint(
+            checkpoint_path,
+            weights_only=False,
+        )
+        # Remove the pretraining head.
+        del self.transformer.prediction_head
+        self.transformer.train()
+
+        self.out_predictor = torch.nn.Linear(self.transformer.hparams["d_model"], 1)
+        self.pad_idx = self.transformer.ignore_index
+        self.n_clip_from_end = n_clip_from_end
+
+        # Metrics
+        self.train_auroc = BinaryAUROC(ignore_index=2)
+        self.valid_auroc = BinaryAUROC(ignore_index=2)
+
+    def configure_optimizers(self):
+
+        # Only the predictor head.
+        if self.unfreeze_all is True:
+            optimizer = torch.optim.AdamW(self.parameters(), **self.optimizer_params)
+        else:
+            optimizer = torch.optim.AdamW(
+                self.out_predictor.parameters(), **self.optimizer_params
+            )
+        return optimizer
+
+    def step(self, stage: str, x: dict[str, Any]):
+
+        n, s = x["x"].shape
+
+        # (n, s)
+        target = x["is_out"][:, None].expand(-1, s)
+
+        # (n, s)
+        target_mask = (
+            torch.arange(s, device=target.device)[None, :].expand(n, -1)
+            < (x["sequence_length"].unsqueeze(-1) - self.n_clip_from_end)
+        ).float()
+
+        # (n, s, k)
+        embeddings = self.transformer(x["x"])
+        # (n, s)
+        predictions = self.out_predictor(embeddings).squeeze(-1)
+        loss = (
+            torch.nn.functional.binary_cross_entropy_with_logits(
+                predictions, target, reduction="none"
+            )
+            * target_mask
+        ).sum() / target_mask.sum()
+
+        self.log(f"{stage}_loss", loss)
+
+        metric = self.train_auroc if stage == "train" else self.valid_auroc
+
+        target = target.int()
+        metric_target = torch.where(
+            target_mask == 1, target, torch.ones([]).to(target) * 2
+        )
+        metric(predictions, metric_target)
+        self.log(f"{stage}_auroc", metric)
+
+        return loss
+
+    def forward(self, x: dict[str, Any]):
+
+        # (n, s, k)
+        embeddings = self.transformer(x["x"])
+        # (n, s)
+        return self.out_predictor(embeddings).squeeze(-1)
 
     def training_step(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
         """Lightning hook for training."""

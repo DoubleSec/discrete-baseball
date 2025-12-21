@@ -95,11 +95,7 @@ class CategoricalState:
 
     @property
     def vocab(self):
-        values = (
-            self.state["values"]
-            if not self.explicit_missing
-            else self.state["values"] + ["<MISSING>"]
-        )
+        values = self.state["values"] + ["<MISSING>"]
         return [f"{self.state['group']} = {label}" for label in values]
 
 
@@ -190,7 +186,7 @@ def make_vocabulary(
     if special_tokens is not None:
         unique_values.update(set(special_tokens))
 
-    return {item: i for i, item in enumerate(unique_values)}
+    return {item: i for i, item in enumerate(sorted(unique_values))}
 
 
 if __name__ == "__main__":

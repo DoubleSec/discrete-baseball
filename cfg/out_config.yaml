@@ -1,0 +1,46 @@
+# Random seed for reproducibility
+random_seed: 12345
+
+# Where is prepared data
+prepared_data_path: ./data/raw_data.parquet
+
+# Where's the pretrained model?
+pretrained_path: ./model/epoch=3-valid_loss=2.2516.ckpt
+
+dataset_params:
+
+  keys:
+    - game_pk
+    - player_name
+    - at_bat_number
+
+  order_columns:
+    - pitch_number
+  
+  # Not useful for the at-bat version
+  time_column: inning
+
+targets: 
+  - is_out
+
+dataloader_params:
+  # Generic examples.
+  batch_size: 1024
+  num_workers: 0
+
+trainer_params:
+  # Examples
+  precision: bf16-mixed
+  max_epochs: 4
+  accumulate_grad_batches: 1
+  log_every_n_steps: 50
+
+model_params:
+  n_clip_from_end: 2
+  unfreeze_all: true
+
+optimizer_params:
+  # These are just the Adam defaults.
+  lr: 0.005
+  betas: [0.9, 0.995]
+  weight_decay: 0

@@ -14,6 +14,33 @@ from .processing import (
     make_vocabulary,
 )
 
+EVENT_IS_OUT = {
+    "catcher_interf": 0,
+    "double": 0,
+    "sac_bunt": 1,
+    "triple_play": 1,
+    "fielders_choice_out": 1,
+    "fielders_choice": 1,
+    "hit_by_pitch": 0,
+    "truncated_pa": 0,
+    "sac_fly": 1,
+    "field_out": 1,
+    "strikeout": 1,
+    "single": 0,
+    "double_play": 1,
+    "triple": 0,
+    "force_out": 1,
+    "field_error": 0,
+    "grounded_into_double_play": 1,
+    "home_run": 0,
+    "walk": 0,
+    "sac_fly_double_play": 1,
+    "None": 0,
+    "strikeout_double_play": 1,
+    "intent_walk": 0,
+    "sac_bunt_double_play": 1,
+}
+
 
 def initial_prep(
     path: str,
@@ -40,10 +67,12 @@ class TrainingDataset(Dataset):
         keys: list[str],
         order_columns: list[str],
         time_column: str,
-        features: dict[str, dict[str, Any]],
-        special_tokens: list[str],
-        keyword_args: dict[str, Any],
+        special_tokens: list[str] | None = None,
+        features: dict[str, dict[str, Any]] | None = None,
+        keyword_args: dict[str, Any] | None = None,
         state_dict: dict[str:Any] | None = None,
+        extra_processing: callable | None = None,
+        targets: list[str] | None = None,
     ):
         """Load a dataset and do any prep required.
 
@@ -51,35 +80,49 @@ class TrainingDataset(Dataset):
         """
         super().__init__()
 
-        if state_dict is None:
+        self.keys = keys
+        # The expectation is that targets are usable as such after `extra_preprocessing`.
+        targets = [] if targets is None else targets
+        self.targets = targets
 
-            self.keys = keys
-            self.order_columns = order_columns
-            self.time_column = time_column
+        if state_dict is not None:
+            print("Configuring dataset using state dict.")
+            features = state_dict["stringifiers"].keys()
 
-            # Prepare the dataset
-            df = (
-                pl.read_parquet(path)
-                .filter(pl.col("game_type").is_in(["R", "F", "D", "L", "W"]))
-                .select(
-                    *keys,
-                    *order_columns,
-                    # Non-generalizable gross hack
-                    (
-                        pl.col("inning")
-                        + pl.when(pl.col("inning_topbot") == "Top")
-                        .then(0)
-                        .otherwise(0.5)
-                    ).alias("inning"),
-                    *[column for column in features],
-                )
-                .with_columns(
-                    (pl.col(time_column) - pl.col(time_column).shift(1))
-                    .over(partition_by=keys, order_by=order_columns)
-                    .alias("time_diffs")
-                )
+        df = pl.read_parquet(path)
+        if extra_processing is not None:
+            df = extra_processing(df, keys)
+
+        # Prepare the dataset
+        df = (
+            df.filter(pl.col("game_type").is_in(["R", "F", "D", "L", "W"]))
+            # Here so it's selectable with a stringifier and ordered correctly
+            .with_columns(
+                # Only have the pitcher name on the first pitch
+                pl.when(pl.col("pitch_number") == 1)
+                .then(pl.col("player_name"))
+                .otherwise(None)
+                .alias("pitcher_name"),
             )
+            .select(
+                *keys,
+                *order_columns,
+                *targets,
+                # Non-generalizable gross hack
+                (
+                    pl.col("inning")
+                    + pl.when(pl.col("inning_topbot") == "Top").then(0).otherwise(0.5)
+                ).alias("inning"),
+                *[column for column in features],
+            )
+            .with_columns(
+                (pl.col(time_column) - pl.col(time_column).shift(1))
+                .over(partition_by=keys, order_by=order_columns)
+                .alias("time_diffs")
+            )
+        )
 
+        if state_dict is None:
             self.time_tokenizer = TimeTokenizer.from_data(df["time_diffs"])
 
             self.stringifiers = {
@@ -94,57 +137,58 @@ class TrainingDataset(Dataset):
                 self.time_tokenizer,
                 special_tokens=special_tokens,
             )
-            print(f"Vocab size: {len(self.complete_vocab)}")
-
-            df = (
-                df.select(
-                    *keys,
-                    *order_columns,
-                    self.time_tokenizer.transform(pl.col("time_diffs")).alias(
-                        "time_diffs"
-                    ),
-                    *[
-                        s.transform(pl.col(n)).alias(n)
-                        for n, s in self.stringifiers.items()
-                    ],
-                )
-                .with_columns(
-                    pl.concat_list(
-                        "time_diffs", *[pl.col(n) for n in self.stringifiers]
-                    )
-                    .list.drop_nulls()
-                    .alias("feature_list")
-                )
-                .select(*keys, *order_columns, "feature_list")
-                .explode("feature_list")
-                .with_columns(
-                    pl.col("feature_list")
-                    .replace(self.complete_vocab)
-                    .cast(pl.Int64)
-                    .alias("processed_list"),
-                )
-            )
-
-            df = (
-                df.sort(*order_columns)
-                .group_by(*keys)  # Within-group order is always kept
-                .agg("processed_list", "feature_list")
-            )
-
-            # Add SOS and EOS I guess?
-            # Also doesn't generalize
-            self.df = df.with_columns(
-                pl.concat_list(
-                    pl.lit(self.complete_vocab["<SOS>"]),
-                    pl.col("processed_list"),
-                    pl.lit(self.complete_vocab["<EOS>"]),
-                ).alias("processed_list"),
-                pl.col("processed_list").list.len().alias("sequence_length"),
-            )
-            self.max_length = self.df["sequence_length"].max()
-
         else:
-            raise NotImplementedError("TKTK load from saved")
+            self.time_tokenizer = state_dict["time_tokenizer"]
+            self.stringifiers = state_dict["stringifiers"]
+            self.complete_vocab = state_dict["complete_vocab"]
+
+        print(f"Vocab size: {len(self.complete_vocab)}")
+
+        df = (
+            df.select(
+                *keys,
+                *targets,
+                *order_columns,
+                self.time_tokenizer.transform(pl.col("time_diffs")).alias("time_diffs"),
+                *[
+                    s.transform(pl.col(n)).alias(n)
+                    for n, s in self.stringifiers.items()
+                ],
+            )
+            .with_columns(
+                pl.concat_list("time_diffs", *[pl.col(n) for n in self.stringifiers])
+                .list.drop_nulls()
+                .alias("feature_list")
+            )
+            .select(*keys, *targets, *order_columns, "feature_list")
+            .explode("feature_list")
+            .with_columns(
+                pl.col("feature_list")
+                .replace_strict(
+                    self.complete_vocab, default=self.complete_vocab["<UNK>"]
+                )
+                .cast(pl.Int64)
+                .alias("processed_list"),
+            )
+        )
+
+        df = (
+            df.sort(*order_columns)
+            .group_by(*keys, *targets)  # Within-group order is always kept
+            .agg("processed_list", "feature_list")
+        )
+
+        # Add SOS and EOS I guess?
+        # Also doesn't generalize
+        self.df = df.with_columns(
+            pl.concat_list(
+                pl.lit(self.complete_vocab["<SOS>"]),
+                pl.col("processed_list"),
+                pl.lit(self.complete_vocab["<EOS>"]),
+            ).alias("processed_list"),
+            pl.col("processed_list").list.len().alias("sequence_length"),
+        )
+        self.max_length = self.df["sequence_length"].max()
 
     def __len__(self) -> int:
         """Obvious"""
@@ -159,7 +203,17 @@ class TrainingDataset(Dataset):
             (0, self.max_length - row["sequence_length"]),
             value=self.complete_vocab["<PAD>"],
         )
-        return {k: row[k] for k in self.keys} | {"x": x}
+        targets = (
+            {t: torch.tensor(row[t]) for t in self.targets}
+            if len(self.targets) > 0
+            else {}
+        )
+
+        return (
+            {k: row[k] for k in self.keys}
+            | targets
+            | {"x": x, "sequence_length": torch.tensor(row["sequence_length"])}
+        )
 
     @classmethod
     def from_saved(cls, path, *args, **kwargs):
@@ -188,3 +242,26 @@ if __name__ == "__main__":
 
     print(len(df))
     print(df[500])
+
+    # Test new features
+
+    def extra(df, keys):
+
+        return df.with_columns(
+            pl.col("events")
+            .replace_strict(EVENT_IS_OUT, return_dtype=pl.Float32)
+            .max()
+            .over(partition_by=keys)
+            .alias("is_out")
+        )
+
+    df_2 = TrainingDataset(
+        path=config["prepared_data_path"],
+        **config["dataset_params"],
+        state_dict=df.get_state(),
+        extra_processing=extra,
+        targets=["is_out"],
+    )
+
+    print(len(df_2))
+    print(df_2[500])
