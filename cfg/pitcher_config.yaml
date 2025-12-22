@@ -1,0 +1,86 @@
+# Random seed for reproducibility
+random_seed: 12345
+
+# Where is prepared data
+prepared_data_path: ./data/raw_data.parquet
+
+dataset_params:
+
+  keys:
+    - game_pk
+    - player_name
+    - at_bat_number
+
+  order_columns:
+    - pitch_number
+  
+  # Not useful for the at-bat version
+  time_column: inning
+
+  features:
+    # pitcher_name:
+    #   data_type: categorical
+    #   group: pitcher
+    #   explicit_missing: false
+    pitch_name:
+      data_type: categorical
+      group: pitch
+    release_speed:
+      data_type: numeric
+      group: velo
+    plate_x:
+      data_type: numeric
+      group: plate_x
+    plate_z:
+      data_type: numeric
+      group: plate_z
+    pfx_x:
+      data_type: numeric
+      group: pfx_x
+    pfx_z:
+      data_type: numeric
+      group: pfx_z
+    description:
+      data_type: categorical
+      group: description
+    # events:
+    #   data_type: categorical
+    #   group: events
+    #   explicit_missing: false
+
+  targets: 
+    - pitcher_id
+
+  special_tokens:
+    - "<SOS>"
+    - "<EOS>"
+    - "<PAD>"
+    - "<UNK>"
+
+  keyword_args:
+    n_buckets: 32
+
+dataloader_params:
+  # Generic examples.
+  batch_size: 1024
+  num_workers: 0
+
+trainer_params:
+  # Examples
+  precision: bf16-mixed
+  max_epochs: 4
+  accumulate_grad_batches: 1
+  log_every_n_steps: 50
+
+model_params:
+  d_model: 128
+  depth: 4
+  heads: 8
+  emb_dropout: 0.1
+  attn_dropout: 0.1
+
+optimizer_params:
+  # These are just the Adam defaults.
+  lr: 0.005
+  betas: [0.9, 0.995]
+  weight_decay: 0
