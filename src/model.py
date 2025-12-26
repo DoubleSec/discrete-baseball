@@ -31,6 +31,7 @@ class AutoregressivePretrainedModel(pl.LightningModule):
         heads: int,
         emb_dropout: float,
         attn_dropout: float,
+        loggable_hparams: dict[str, Any] | None = None,
     ):
         """Initialize the model.
 
@@ -39,6 +40,7 @@ class AutoregressivePretrainedModel(pl.LightningModule):
 
         super().__init__()
         self.save_hyperparameters(logger=False)
+        self.loggable_hparams = loggable_hparams if loggable_hparams is not None else {}
         self.optimizer_params = optimizer_params
         self.ignore_index = complete_vocab["<PAD>"]
 
@@ -149,6 +151,13 @@ class AutoregressivePretrainedModel(pl.LightningModule):
     def validation_step(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
         """Lightning hook for validation."""
         return self.step("valid", x)
+
+    def on_validation_epoch_end(self):
+        val_perplexity = self.trainer.callback_metrics["valid_perplexity"]
+        self.logger.log_hyperparams(
+            params=self.loggable_hparams,
+            metrics={"hparam_val_perplexity": val_perplexity},
+        )
 
 
 class PitcherPredictionPretrainedModel(pl.LightningModule):

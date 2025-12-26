@@ -82,10 +82,13 @@ if __name__ == "__main__":
         * config["trainer_params"]["max_epochs"]
         * ds.data_stats()["average_fill"]  # Only this much is useful per observation.
     )
-
-    print(
-        f"Number of training tokens (M): {ds.data_stats()['n_tokens'] * config["data_proportions"][0] * config['trainer_params']['max_epochs'] / 1_000_000 :.3f}"
+    n_tokens = (
+        ds.data_stats()["n_tokens"]
+        * config["data_proportions"][0]
+        * config["trainer_params"]["max_epochs"]
     )
+
+    print(f"Number of training tokens (M): {n_tokens / 1_000_000 :.3f}")
     print(f"Number of parameters (M): {n_params / 1_000_000 :.3f}")
     print(f"Expected TeraFLOPs: {expected_total_teraflops :.3f}")
 
@@ -100,6 +103,15 @@ if __name__ == "__main__":
             **ds.get_state(),
             **config["model_params"],
             optimizer_params=config["optimizer_params"] | {"total_steps": total_steps},
+            # mlflow is so much nicer.
+            loggable_hparams={
+                "batch_size": config["dataloader_params"]["batch_size"],
+                "max_epochs": config["trainer_params"]["max_epochs"],
+                "n_params": n_params,
+                "n_tokens": n_tokens,
+            }
+            | config["model_params"]
+            | config["optimizer_params"],
         )
 
     torch.set_float32_matmul_precision("medium")
