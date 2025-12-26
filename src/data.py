@@ -227,6 +227,17 @@ class TrainingDataset(Dataset):
             "max_seq_len": self.max_length,
         }
 
+    def data_stats(self):
+
+        n_tokens = self.df["sequence_length"].sum()
+        n_possible_tokens = len(self) * self.max_length
+
+        return {
+            "n_sequences": len(self),
+            "n_tokens": n_tokens,
+            "average_fill": n_tokens / n_possible_tokens,
+        }
+
 
 if __name__ == "__main__":
 

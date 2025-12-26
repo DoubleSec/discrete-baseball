@@ -69,8 +69,24 @@ class AutoregressivePretrainedModel(pl.LightningModule):
         We can't pass arguments to this directly, so they need to go to the init.
         """
 
-        optimizer = torch.optim.AdamW(self.parameters(), **self.optimizer_params)
-        return optimizer
+        optimizer = torch.optim.AdamW(
+            self.parameters(),
+            betas=self.optimizer_params["betas"],
+            weight_decay=self.optimizer_params["weight_decay"],
+        )
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer=optimizer,
+            max_lr=self.optimizer_params["max_lr"],
+            total_steps=self.optimizer_params["total_steps"],
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "step",
+                "frequency": 1,
+            },
+        }
 
     def forward(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
         """Forward pass for the model.
@@ -82,6 +98,13 @@ class AutoregressivePretrainedModel(pl.LightningModule):
         """
 
         return self.transformer(x)
+
+    def loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """Mainly for FLOPs calculation."""
+
+        return torch.nn.functional.cross_entropy(
+            logits.mT, targets, ignore_index=self.ignore_index, reduction="mean"
+        )
 
     def step(self, stage: str, x: dict[str, torch.Tensor]) -> torch.Tensor:
         """Generic step for training or validation, assuming they're similar.
@@ -104,9 +127,7 @@ class AutoregressivePretrainedModel(pl.LightningModule):
         # (n, v, s-1)
         logits = self.prediction_head(embeddings)
 
-        loss = torch.nn.functional.cross_entropy(
-            logits.mT, targets, ignore_index=self.ignore_index, reduction="mean"
-        )
+        loss = self.loss(logits, targets)
 
         # Update the metric
         if stage == "train":
