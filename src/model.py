@@ -156,7 +156,7 @@ class AutoregressivePretrainedModel(pl.LightningModule):
         val_perplexity = self.trainer.callback_metrics["valid_perplexity"]
         self.logger.log_hyperparams(
             params=self.loggable_hparams,
-            metrics={"hparam_val_perplexity": val_perplexity},
+            metrics={"val_perplexity": val_perplexity},
         )
 
 
